@@ -6,8 +6,9 @@ const AuthorizationError = require('../../exceptions/AuthorizationError');
 const { mapDBToPlaylistSongs } = require('../../utils');
 
 class PlaylistSongsService {
-  constructor() {
+  constructor(cacheService) {
     this._pool = new Pool();
+    this._cacheService = cacheService;
   }
 
   async addPlaylistSong({ songId, playlistId }) {
@@ -21,6 +22,8 @@ class PlaylistSongsService {
     if (!result.rows.length) {
       throw new InvariantError('Lagu gagal ditambahkan ke playlist');
     }
+
+    await this._cacheService.delete(`playlist:${playlistId}`);
     return result.rows[0].id;
   }
 
@@ -35,20 +38,35 @@ class PlaylistSongsService {
     if (!result.rowCount) {
       throw new InvariantError('Lagu gagal dihapus dari playlist, Id tidak ditemukan');
     }
+
+    await this._cacheService.delete(`playlist:${playlistId}`);
   }
 
   async getPlaylistSongs(playlistId) {
-    const query = {
-      text: 'SELECT p.id, s.title, s.performer FROM playlistsongs p LEFT JOIN songs s ON p.song_id = s.id WHERE p.playlist_id = $1 ',
-      values: [playlistId],
-    };
-    const result = await this._pool.query(query);
+    try {
+      // mendapatkan catatan dari cache
+      const result = await this._cacheService.get(`playlist:${playlistId}`);
+      return JSON.parse(result);
+    } catch (error) {
+      const query = {
+        text: 'SELECT p.id, s.title, s.performer FROM playlistsongs p LEFT JOIN songs s ON p.song_id = s.id WHERE p.playlist_id = $1 ',
+        values: [playlistId],
+      };
 
-    if (!result.rows.length) {
-      throw new InvariantError('Playlist gagal diverifikasi');
+      const result = await this._pool.query(query);
+
+      if (!result.rows.length) {
+        throw new InvariantError('Playlist gagal diverifikasi');
+      }
+
+      const mappedResult = result.rows;
+      await this._cacheService.set(`playlist:${playlistId}`, JSON.stringify(mappedResult));
+
+      return mappedResult;
     }
+
     // console.log(result);
-    return result.rows;
+    // return result.rows;
     // return result.rows.map(mapDBToPlaylistSongs);
   }
 
